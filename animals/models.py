@@ -1,4 +1,5 @@
 import numpy as np 
+from tqdm.notebook import tqdm
 
 
 softmax = lambda x: np.exp(x) / sum(np.exp(x))
@@ -32,11 +33,15 @@ class Field:
 
 class Config:
     
-    def __init__(self, food_per_year: float, eaten_food: float, size: int, children: int=2):
+    def __init__(self, food_per_year: float, 
+                eaten_food: float, size: int, 
+                init_animals: int = 100,
+                children: int=2):
         self.food_per_year = food_per_year
         self.eaten_food = eaten_food
         self.size = size
         self.children = children
+        self.init_animals = init_animals
 
 
 class Environment:
@@ -44,6 +49,12 @@ class Environment:
     def __init__(self, config: Config):
         self.config = config
         self.fields = {}
+        self.animals = []
+        self.stats = []
+        for a in range(self.config.init_animals):
+            x = np.random.randint(0, self.config.size)
+            y = np.random.randint(0, self.config.size)
+            self.animals.append(Animal(position=(x, y), environment=self))
         for x in range(self.config.size):
             for y in range(self.config.size):
                 f = Field(position=(x, y))
@@ -62,12 +73,36 @@ class Environment:
                 field = self.fields[(x, y)]
                 field.danger = danger
     
-    def iteration(self):
+    def iteration(self, i: int):
         # animals act
         # animals survive
+        buffer = []
+        for animal in self.animals:
+            output = animal.do()
+            if output is not None:
+                buffer.extend(output)
+            death = animal.survive()
+            # store stats
+            self.stats.append({
+                'iteration': i,
+                'x': int(animal.position[0]),
+                'y': int(animal.position[1]),
+                'energy': animal.energy,
+                'age': animal.age,
+                'death': animal.age_death,
+                'children': animal.generated_children
+            })
+            if not death:
+                buffer.append(animal)
+        self.animals = buffer
         # fields production
         for f in self.fields.values():
             f.produce(food_increment=self.config.food_per_year)
+    
+    def run(self, number_of_iterations: int):
+        executions = list(range(number_of_iterations))
+        for i in tqdm(executions):
+            self.iteration(i)
     
     @property
     def food_to_numpy(self):
@@ -92,6 +127,7 @@ class Animal:
         self.age = 0
         self.energy = energy
         self.position = position
+        self.generated_children = 0
         self.env = environment
         self.age_death = None
         if dna is None:
@@ -115,12 +151,13 @@ class Animal:
     
     def do(self):
         action = self._action_choice()
+        self.energy -= 1
         if action < 4:
-            self._move(direction=action)
+            return self._move(direction=action)
         elif action == 5:
-            self._eat()
+            return self._eat()
         else:
-            self._generate()
+            return self._generate()
     
     def _move(self, direction: int):
         """The animal moves in the direction
@@ -141,8 +178,9 @@ class Animal:
     
     def _eat(self):
         q = self.env.config.eaten_food
-        self.env.fields[self.position].food -= q
-        self.energy = np.min([self.energy + q, 100])
+        if q <= self.env.fields[self.position].food:
+            self.env.fields[self.position].food = np.max([self.env.fields[self.position].food - q, 0])
+            self.energy = np.min([self.energy + q, 100])
     
     def _generate(self) -> list:
         children = []
@@ -152,7 +190,18 @@ class Animal:
                 mutation = self.dna + np.random.normal(loc=0, scale=.01, size=self.dna.shape)
                 child = Animal(position=self.position, environment=self.env, dna=mutation)
                 children.append(child)
+        self.generated_children += len(children)
         return children
     
     def survive(self) -> bool:
-        pass
+        d = self.env.fields[self.position].danger / 100
+        if np.random.uniform() <= d:
+            self.age_death = self.age
+            return False 
+        o = self.age / 100
+        if np.random.uniform() <= o:
+            self.age_death = self.age
+            return False
+        self.age += 1
+        return True
+        
