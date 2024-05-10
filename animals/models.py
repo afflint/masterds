@@ -36,12 +36,14 @@ class Config:
     def __init__(self, food_per_year: float, 
                 eaten_food: float, size: int, 
                 init_animals: int = 100,
-                children: int=2):
+                children: int=2,
+                reproduction_rate: float = 1):
         self.food_per_year = food_per_year
         self.eaten_food = eaten_food
         self.size = size
         self.children = children
         self.init_animals = init_animals
+        self.reproduction_rate = reproduction_rate
 
 
 class Environment:
@@ -94,19 +96,31 @@ class Environment:
             })
             if not death:
                 buffer.append(animal)
-        self.animals = buffer
+        self.animals = []
+        self.animals.extend(buffer)
+        buffer = []
         # fields production
         for f in self.fields.values():
             f.produce(food_increment=self.config.food_per_year)
     
-    def run(self, number_of_iterations: int):
+    def run(self, number_of_iterations: int, max_population: int = None):
         executions = list(range(number_of_iterations))
         for i in tqdm(executions):
             self.iteration(i)
+            if max_population is not None and len(self.animals) >= max_population:
+                break
     
     @property
     def food_to_numpy(self):
         return self._field_to_numpy(field='food')
+    
+    @property
+    def animals_to_numpy(self):
+        m = np.zeros((self.config.size, self.config.size))
+        for animal in self.animals:
+            col, row = animal.position
+            m[self.config.size - (row + 1), col] += 1
+        return m
     
     @property
     def danger_to_numpy(self):
@@ -152,6 +166,7 @@ class Animal:
     def do(self):
         action = self._action_choice()
         self.energy -= 1
+        self.age += 1
         if action < 4:
             return self._move(direction=action)
         elif action == 5:
@@ -184,7 +199,7 @@ class Animal:
     
     def _generate(self) -> list:
         children = []
-        p = self.energy / 100
+        p = self.energy / (100 * self.env.config.reproduction_rate)
         for c in range(self.env.config.children):
             if np.random.uniform() <= p:
                 mutation = self.dna + np.random.normal(loc=0, scale=.01, size=self.dna.shape)
